@@ -1,0 +1,58 @@
+# Create namespace to launch fargate pods
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fargate-jenkins
+
+
+# This role binding grants the jenkins service account in default namespace ability to build in fargate namespace
+# change namespace according to namespace jenkins is deployed on
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: default-rbac
+subjects:
+  - kind: ServiceAccount
+    # Reference to upper's `metadata.name`
+    name: jenkins
+    # Reference to upper's `metadata.namespace`
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+
+
+
+
+# apiVersion: v1
+# kind: Namespace
+# metadata:
+#   name: fargate
+# ---
+# apiVersion: v1
+# kind: ServiceAccount
+# metadata:
+#   name: jenkins-fargate
+#   namespace: fargate
+
+# ---
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: ClusterRoleBinding
+# metadata:
+#   name: jenkins-fargate-rbac
+# subjects:
+#   - kind: ServiceAccount
+#     # Reference to upper's `metadata.name`
+#     name: jenkins-fargate
+#     # Reference to upper's `metadata.namespace`
+#     namespace: fargate
+# roleRef:
+#   kind: ClusterRole
+#   name: cluster-admin
+#   apiGroup: rbac.authorization.k8s.io
+
+
+
