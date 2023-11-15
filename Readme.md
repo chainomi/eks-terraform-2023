@@ -39,19 +39,20 @@ Requirements
 >   i. `alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'` <br />
 >   ii. `alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'` <br />
 >   iii. `alb.ingress.kubernetes.io/certificate-arn:` <br />
->   iv.  `- path: /
-          pathType: Prefix
-          backend:
+>   iv.  <pre> - path: / 
+          pathType: Prefix 
+          backend: 
             service:
                 name: ssl-redirect
                 port:
-                    name: use-annotation` <br />
+                    name: use-annotation 
+         </pre>
 > b. Delete `alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]' ` <br />
 > c. Change `alb.ingress.kubernetes.io/certificate-arn:` to `alb.ingress.kubernetes.io/certificate-arn: ${ssl_cert}` <br />
 > d. Change `hostName:` to `hostName:${domain_name}` <br />
- 2. Changes to `terraform\jenkins.tf`
+ 1. Changes to `terraform\jenkins.tf`
 > a. Uncomment `ssl_cert` and `domain_name` lines   
- 2. Changes to `env\<env>.tfvars`
+ 1. Changes to `env\<env>.tfvars`
 > a. Uncomment jenkins_alb_cert and jenkins_domain_name. Enter values for both. <br />
 
 
