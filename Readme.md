@@ -34,25 +34,25 @@ Requirements
 ## Configure Jenkins with domain name and ssl
  With the default settings, the helm chart for jenkins will create an ingress / alb which can be used to used to access the site. Follow the steps below to enable ssl and domain
 
- 1. Changes to `jenkins-helm\values.yaml` \
-> a. Uncomment the following in 
->   i. `alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'` \
->   ii. `alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'` \
->   iii. `alb.ingress.kubernetes.io/certificate-arn:` \
+ 1. Changes to `jenkins-helm\values.yaml` <br />
+> a. Uncomment the following in <br />
+>   i. `alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'` <br />
+>   ii. `alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'` <br />
+>   iii. `alb.ingress.kubernetes.io/certificate-arn:` <br />
 >   iv.  `- path: /
           pathType: Prefix
           backend:
             service:
                 name: ssl-redirect
                 port:
-                    name: use-annotation` \
-> b. Delete `alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]' ` \
-> c. Change `alb.ingress.kubernetes.io/certificate-arn:` to `alb.ingress.kubernetes.io/certificate-arn: ${ssl_cert}` \
-> d. Change `hostName:` to `hostName:${domain_name}` \
+                    name: use-annotation` <br />
+> b. Delete `alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]' ` <br />
+> c. Change `alb.ingress.kubernetes.io/certificate-arn:` to `alb.ingress.kubernetes.io/certificate-arn: ${ssl_cert}` <br />
+> d. Change `hostName:` to `hostName:${domain_name}` <br />
  2. Changes to `terraform\jenkins.tf`
 > a. Uncomment `ssl_cert` and `domain_name` lines   
  2. Changes to `env\<env>.tfvars`
-> a. Uncomment jenkins_alb_cert and jenkins_domain_name. Enter values for both. \
+> a. Uncomment jenkins_alb_cert and jenkins_domain_name. Enter values for both. <br />
 
 
 ## Deploy EKS cluster, Networking, ECR and Jenkins (if enabled)
