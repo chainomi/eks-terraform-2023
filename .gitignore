@@ -30,4 +30,4 @@ terraform.rc
 .terraform.lock.hcl
 
 
-app/env
+app/env/
