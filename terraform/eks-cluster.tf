@@ -180,7 +180,8 @@ module "external_dns" {
     "policy"     = "sync"                                              # Modify how DNS records are sychronized between sources and providers.
     "txtOwnerId" = "${var.environment}-${var.application_name}-domain" #unique identifier for each external DNS instance
   }
-
-}
 # Helm chart repo - https://artifacthub.io/packages/helm/bitnami/external-dns
 # Module repo - https://github.com/DNXLabs/terraform-aws-eks-external-dns
+
+}
+

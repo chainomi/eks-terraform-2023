@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
         - name: flask-api
-          image: 488144151286.dkr.ecr.us-west-1.amazonaws.com/flask-api:latest #change
+          image: #change
           resources:
             limits:
               cpu: 500m

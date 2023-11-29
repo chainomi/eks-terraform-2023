@@ -18,19 +18,15 @@ resource "helm_release" "jenkins" {
     {
       admin_user     = var.jenkins_admin_user
       admin_password = jsondecode(data.aws_secretsmanager_secret_version.current.secret_string)["${var.jenkins_secret_key}"]
-      # ssl_cert       = var.jenkins_alb_cert
-      # domain_name    = var.jenkins_domain_name
-      
+
       #s3 backup parameters
       enable_backup = var.enable_jenkins_backup
       bucket_path   = "${var.backup_bucket_name}/${var.backup_bucket_folder}"
       cron_schedule = var.cron_schedule
 
-
-
   })]
 
-  depends_on = [aws_efs_access_point.jenkins_efs_access_point, kubectl_manifest.efs_persistent_claim]
+  depends_on = [module.eks_blueprints_addons, kubectl_manifest.efs_persistent_claim]
 }
 
 # Secret manager - retrieve jenkins admin password
@@ -109,7 +105,7 @@ parameters:
   directoryPerms: "777"
 YAML
 
-  depends_on = [aws_efs_access_point.jenkins_efs_access_point]
+  depends_on = [aws_efs_access_point.jenkins_efs_access_point, module.eks_blueprints_addons]
 }
 
 resource "kubectl_manifest" "efs_persistent_claim" {
@@ -128,48 +124,137 @@ spec:
     requests:
       storage: 100Gi
 YAML
-  depends_on = [kubectl_manifest.namespace]
+  depends_on = [kubectl_manifest.namespace, kubectl_manifest.efs_persistent_volume]
 }
 
 
 #S3 backup storage
 
 resource "aws_s3_bucket" "jenkins_backup" {
-  count      = var.enable_jenkins && var.enable_jenkins_backup ? 1 : 0
+  count  = var.enable_jenkins && var.enable_jenkins_backup ? 1 : 0
   bucket = var.backup_bucket_name
 
   tags = local.tags
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "bucket_quarterly" {
-  count      = var.enable_jenkins && var.enable_jenkins_backup ? 1 : 0
-    bucket   = "${aws_s3_bucket.jenkins_backup[count.index].id}"
+  count  = var.enable_jenkins && var.enable_jenkins_backup ? 1 : 0
+  bucket = aws_s3_bucket.jenkins_backup[count.index].id
 
-    rule {
-        id  = "data_retention"        
+  rule {
+    id = "data_retention"
 
-        expiration {
-            days = var.backup_retention
-        }
-
-
-        filter {
-        prefix = "${var.backup_bucket_folder}/"
-        }
-
-        status = "Enabled"
+    expiration {
+      days = var.backup_retention
     }
+
+
+    filter {
+      prefix = "${var.backup_bucket_folder}/"
+    }
+
+    status = "Enabled"
+  }
 
 }
 
 # Get Jenkins ALB DNS address
 
 data "kubernetes_ingress_v1" "this" {
+  count     = var.enable_jenkins ? 1 : 0 
   metadata {
-    name = "jenkins"
+    name      = "jenkins"
     namespace = var.jenkins_namespace
   }
   depends_on = [
-    module.eks
+    helm_release.jenkins, kubectl_manifest.jenkins_ingress_no_ssl
   ]
+}
+
+
+resource "kubectl_manifest" "jenkins_ingress_no_ssl" {
+  count     = var.enable_jenkins && var.jenkins_enable_ssl == false ? 1 : 0
+  yaml_body = <<YAML
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jenkins
+  namespace: ${var.jenkins_namespace} 
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/load-balancer-name: jenkins-alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /login
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/success-codes: 200,302
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'    
+  name: jenkins
+             
+spec:
+  rules:
+  - host: 
+    http: 
+      paths:    
+      - path: /
+        backend:
+          service:
+            name: jenkins
+            port:
+              number: 8080
+        pathType: Prefix
+YAML
+
+  depends_on = [ helm_release.jenkins ]
+}
+
+resource "kubectl_manifest" "jenkins_ingress_ssl" {
+  count     = var.enable_jenkins && var.jenkins_enable_ssl ? 1 : 0
+  yaml_body = <<YAML
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jenkins
+  namespace: ${var.jenkins_namespace} 
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/load-balancer-name: jenkins-alb-ssl
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'
+    alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'
+    alb.ingress.kubernetes.io/certificate-arn: ${var.jenkins_alb_cert}
+    alb.ingress.kubernetes.io/healthcheck-path: /login
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/success-codes: 200,302
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'    
+  name: jenkins-ssl
+             
+spec:
+  rules:
+  - host: ${var.jenkins_domain_name}
+    http: 
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ssl-redirect
+            port:
+              name: use-annotation               
+      - path: /
+        backend:
+          service:
+            name: jenkins
+            port:
+              number: 8080
+        pathType: Prefix
+YAML
+
+  depends_on = [ helm_release.jenkins ]
 }

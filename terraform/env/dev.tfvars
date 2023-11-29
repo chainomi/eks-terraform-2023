@@ -2,7 +2,7 @@
 region = "us-west-1"
 environment ="dev"
 application_name = "jenkins"
-service_list = ["flask-api"]
+service_list = ["flask-api", "jenkins-images"]
 ecr_image_mutability = "MUTABLE"
 
 # AWS managed nodes configuration
@@ -27,17 +27,22 @@ admin_access_role_arn = ""
 power_user_role_arn = ""
 read_access_role_arn = ""
 
-#jenkins
+# Jenkins - General
 enable_jenkins = true
 jenkins_namespace = "jenkins"
 jenkins_secret_name = "jenkins_password"
 jenkins_secret_key = "password"
 jenkins_efs_access_point_directory = "/jenkins"
 jenkins_admin_user = "admin"
+
+# Jenkins - DNS
+jenkins_enable_ssl = false
 jenkins_domain_name = ""
 jenkins_alb_cert = ""
+
+# Jenkins - backup
 backup_bucket_name = "jenkins-test-chai-2023"
 backup_bucket_folder = "backup"
 backup_retention = 90
 cron_schedule = "0 2 * * *"
-enable_jenkins_backup = true
+enable_jenkins_backup = false

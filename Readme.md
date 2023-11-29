@@ -32,28 +32,10 @@ Requirements
 1. Create a secret in AWS secret manager e.g. `jenkins_password` with a key e.g. `password` and value set to the desired password. Add the secret name and secret key in `terraform\env\<env>.tfvars`
 
 ## Configure Jenkins with domain name and ssl
- With the default settings, the helm chart for jenkins will create an ingress / alb which can be used to used to access the site. Follow the steps below to enable ssl and domain
+ The default ingress on the helm chart for jenkins has been disabled and replaced with terraform managed ingress resources (via kubernetes manifest files in `jenkins.tf`). The ssl enabled ingress manifest allows through a domain and the ssl disabled manifest and access through a load balancer
 
- 1. Changes to `jenkins-helm\values.yaml` <br />
-> a. Uncomment the following in <br />
->   i. `alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'` <br />
->   ii. `alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'` <br />
->   iii. `alb.ingress.kubernetes.io/certificate-arn:` <br />
->   iv.  <pre> - path: / 
-          pathType: Prefix 
-          backend: 
-            service:
-                name: ssl-redirect
-                port:
-                    name: use-annotation 
-         </pre>
-> b. Delete `alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]' ` <br />
-> c. Change `alb.ingress.kubernetes.io/certificate-arn:` to `alb.ingress.kubernetes.io/certificate-arn: ${ssl_cert}` <br />
-> d. Change `hostName:` to `hostName:${domain_name}` <br />
- 1. Changes to `terraform\jenkins.tf`
-> a. Uncomment `ssl_cert` and `domain_name` lines   
- 1. Changes to `env\<env>.tfvars`
-> a. Uncomment jenkins_alb_cert and jenkins_domain_name. Enter values for both. <br />
+ 1. Enable SSL (for access through domain)  by setting the `jenkins_enable_ssl` variable to `true`
+ 2. Disable SSL (for access through load balancer) by setting the `jenkins_enable_ssl` variable to `false`
 
 
 ## Deploy EKS cluster, Networking, ECR and Jenkins (if enabled)

@@ -29,11 +29,6 @@ output "config_map_aws_auth" {
   value       = module.eks.aws_auth_configmap_yaml
 }
 
-output "clregion" {
-  description = "AWS region"
-  value       = var.region
-}
-
 output "cluster_name" {
   description = "Kubernetes Cluster Name"
   value       = local.cluster_name
@@ -56,16 +51,21 @@ output "node_security_group_id" {
 
 output "ecr_repo_url_map" {
   description = "List of ECR repo's created"
-  value = values(aws_ecr_repository.ecr)[*].repository_url
+  value       = values(aws_ecr_repository.ecr)[*].repository_url
 }
 
 output "access_point_id" {
   description = "EFS access point id"
-  value = aws_efs_access_point.jenkins_efs_access_point[0].id
+  value       = var.enable_jenkins ? aws_efs_access_point.jenkins_efs_access_point[0].id : null
 }
 
 output "jenkins_alb_dns" {
   description = "Jenkins ALB DNS name"
-  value = data.kubernetes_ingress_v1.this.status.0.load_balancer.0.ingress.0.hostname
-  
+  value       = var.enable_jenkins && var.jenkins_enable_ssl == false ? "http://${data.kubernetes_ingress_v1.this[0].status.0.load_balancer.0.ingress.0.hostname}" : null
+
+}
+
+output "jenkins_domain" {
+  description = "Jenkins domain name address"
+  value       = var.enable_jenkins && var.jenkins_enable_ssl ? "https://${var.jenkins_domain_name}" : null
 }

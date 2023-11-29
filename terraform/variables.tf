@@ -54,7 +54,7 @@ variable "public_subnet_cidrs" {
 
 
 variable "cert_manager_route53_hosted_zone_arns" {
-    description = "Hosted zone ARN for Certificate Manager in EKS Cluster"
+  description = "Hosted zone ARN for Certificate Manager in EKS Cluster"
 }
 
 variable "service_list" {
@@ -62,7 +62,7 @@ variable "service_list" {
 }
 
 variable "ecr_image_mutability" {
-    description = "Image tag mutability setting for ECR repositories"
+  description = "Image tag mutability setting for ECR repositories"
 
 }
 
@@ -83,7 +83,7 @@ variable "enable_jenkins" {
 }
 
 variable "jenkins_namespace" {
-   description = "Name of the Namespace to deploy Jenkins controller resources in the EKS cluster" 
+  description = "Name of the Namespace to deploy Jenkins controller resources in the EKS cluster"
 }
 
 variable "jenkins_admin_user" {
@@ -93,23 +93,23 @@ variable "jenkins_admin_user" {
 }
 
 variable "jenkins_efs_access_point_directory" {
-    description = "The EFS directory to mount the Jenkins data folder"
+  description = "The EFS directory to mount the Jenkins data folder"
 }
 
 variable "jenkins_secret_name" {
-    description = "The name of the secret used to store Jenkins admin user login credential"
+  description = "The name of the secret used to store Jenkins admin user login credential"
 }
 
 variable "jenkins_secret_key" {
-    description = "The name of the key in the secret used to store Jenkins admin user password" 
+  description = "The name of the key in the secret used to store Jenkins admin user password"
 }
 
 variable "jenkins_domain_name" {
-    description = "The domain name to assign to the Jenkins controller if host name and certificate are available"
+  description = "The domain name to assign to the Jenkins controller if host name and certificate are available"
 }
 
 variable "jenkins_alb_cert" {
-    description = "The Jenkins controller load balancer certificate arn"
+  description = "The Jenkins controller load balancer certificate arn"
 }
 
 variable "backup_bucket_name" {
@@ -125,10 +125,14 @@ variable "backup_retention" {
 }
 
 variable "cron_schedule" {
-    description = "The schedule for the Kubernetes cronjob used in backing up Jenkins data"
-  
+  description = "The schedule for the Kubernetes cronjob used in backing up Jenkins data"
+
 }
 
 variable "enable_jenkins_backup" {
   description = "This is used to enable or disable the S3 resources and cronjob for backing up Jenkins data"
+}
+
+variable "jenkins_enable_ssl" {
+  description = "This is used to enable ssl when a domain and certificate exists in account or disable ssl when access via load balancer only is required"
 }
