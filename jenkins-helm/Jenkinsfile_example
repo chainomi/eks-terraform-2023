@@ -1,0 +1,632 @@
+pipeline {
+  agent {
+    kubernetes {
+      yaml '''
+        apiVersion: v1
+        kind: Pod
+        spec:
+          containers:
+          - name: app-name-docker
+            image: <aws_account_id>.dkr.ecr.<aws_region>.amazonaws.com/<repo_name>:dind-aws-1.00
+            securityContext:
+              privileged: true
+            env:
+              - name: DOCKER_TLS_CERTDIR
+                value: ""
+            tty: true          
+          - name: app-name-helm
+            image: <aws_account_id>.dkr.ecr.<aws_region>.amazonaws.com/<repo_name>:tfswitch-1.22
+            command:
+            - cat
+            tty: true
+        '''
+    }
+  }
+    parameters {
+
+            gitParameter name: 'BRANCH',
+                        type: 'PT_BRANCH',
+                        defaultValue: 'docker'   
+            string(name: 'MAJOR_VERSION', defaultValue: '2', description: 'Enter the major version')
+            string(name: 'MINOR_VERSION', defaultValue: '0', description: 'Enter the minor version') 
+            string(name: 'proxy_base_config_version', defaultValue: '2', description: 'Enter proxy base config version') 
+            choice(name: 'environment', choices: "dev\nqa", description: 'Chose environment to deploy')
+            choice(name: 'deploy_code', choices: "no\nyes", description: 'Chose environment to deploy')
+    }
+
+    environment{
+
+            //this will allow taggin of repo
+            GIT_SSH_COMMAND = "ssh -o StrictHostKeyChecking=no"
+
+            //service info
+            service_name="app-name"
+            service_key = sh(script: "date +%m%d%Y-%H%M", returnStdout: true).trim() 
+            patch_number = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+            image_version = "${MAJOR_VERSION}.${MINOR_VERSION}.${patch_number}"     
+            
+            // docker image, ecr and eks cluster
+            image_name="${service_name}"
+            region="<aws_region>"
+            repo_domain="060866400178.dkr.ecr.<aws_region>.amazonaws.com"
+            cluster_name="${environment}-app-eks"
+            namespace="app"
+
+            // helm chart directory
+            chart_location="app/ci/helm/app-name-chart"
+
+            // proxy domains and environment
+            service_domain="app-name.${environment}.app.com"
+            proxy_service_domain="https://proxy.${environment}.app.com"
+            //environment="DEV"
+
+            // token generation information
+            token_domain="https://app-name.${environment}.app.com/auth/api/v1/login"
+            token_domain_prod="https://app-name.app.com/auth/api/v1/login"
+            //token_account_email="app-eks-sa@app.com"
+            token_account_email=sh(script: '''if [ $environment == 'dev' ]
+                                               then echo 'app-eks-sa@app.com'
+                                              elif [ $environment == 'qa' ]
+                                               then  echo 'enter qa account email here'
+                                              fi
+                                           ''', returnStdout: true).trim()
+
+            //token_account_password="202207appEksSA17842"
+            token_account_password=sh(script: '''if [ $environment == 'dev' ]
+                                               then echo '202207appEksSA17842'
+                                              elif [ $environment == 'qa' ]
+                                               then  echo 'enter qa password here'
+                                              fi
+                                           ''', returnStdout: true).trim()              
+
+            // config updater
+            config_updater_domain="https://configupdater.${environment}.app.com/deploy"
+
+            // config service
+            config_service_domain="https://cs.app.com"
+
+    }
+
+
+	stages {
+	    stage('Checkout repository') {
+			steps {
+				checkout([
+						$class: 'GitSCM',
+						branches: [[name: "${params.BRANCH}"]],
+                        doGenerateSubmoduleConfigurations: false,
+						extensions: [],
+						userRemoteConfigs: [[
+								credentialsId: 'jenkins_bb',
+								url: 'git@bitbucket.org:app/app-name.git'
+						]]
+				])
+			}
+		}
+             
+
+        stage("Assuming role for perform docker build and push - Dev environment") {
+            when {
+                    expression { environment == 'dev' }
+            }             
+            steps {
+                container('app-name-docker') {
+                        withCredentials([string(credentialsId: 'cloudbees-appdev-role-access', variable: 'ROLE_ARN'), string(credentialsId: 'cloudbees-external-id', variable: 'EXTERNAL_ID')]) {
+                            script {
+                                result = sh(returnStdout: true, script: """
+                                    aws sts assume-role --role-arn ${ROLE_ARN} --role-session-name ${EXTERNAL_ID} --external-id ${EXTERNAL_ID}
+                                """).trim()
+                                
+                                env.AWS_ACCESS_KEY_ID = sh(returnStdout: true, script: """echo '${result}' | jq .Credentials.AccessKeyId | xargs""").trim()
+                                env.AWS_SECRET_ACCESS_KEY = sh(returnStdout: true, script: """echo '${result}' | jq .Credentials.SecretAccessKey | xargs""").trim()
+                                env.AWS_SESSION_TOKEN = sh(returnStdout: true, script: """echo '${result}' | jq .Credentials.SessionToken | xargs""").trim()
+                            }
+                        }
+                  }
+            }
+        }
+
+        stage("Assuming role for perform docker build and push - QA environment") {
+            when {
+                    expression { environment == 'qa' }
+            }             
+            steps {
+                container('app-name-docker') {
+                        withCredentials([string(credentialsId: 'cloudbees-appqa-role-access', variable: 'ROLE_ARN'), string(credentialsId: 'cloudbees-external-id', variable: 'EXTERNAL_ID')]) {
+                            script {
+                                result = sh(returnStdout: true, script: """
+                                    aws sts assume-role --role-arn ${ROLE_ARN} --role-session-name ${EXTERNAL_ID} --external-id ${EXTERNAL_ID}
+                                """).trim()
+                                
+                                env.AWS_ACCESS_KEY_ID = sh(returnStdout: true, script: """echo '${result}' | jq .Credentials.AccessKeyId | xargs""").trim()
+                                env.AWS_SECRET_ACCESS_KEY = sh(returnStdout: true, script: """echo '${result}' | jq .Credentials.SecretAccessKey | xargs""").trim()
+                                env.AWS_SESSION_TOKEN = sh(returnStdout: true, script: """echo '${result}' | jq .Credentials.SessionToken | xargs""").trim()
+                            }
+                        }
+                  }
+            }
+        }
+    
+		stage('Build Docker image') {
+			steps {
+                container('app-name-docker') {
+                    sh (script: '''
+                        set -xe
+                        docker build -t $image_name --build-arg VERSION=$image_version .
+                        ''', returnStdout: false)
+                  }
+            }
+        }
+        
+        stage('Push image to ECR') {
+			steps {
+                    container('app-name-docker') {                        
+                        sh (script: '''
+                            set -xe
+                            
+                            # ECR login
+                            aws ecr get-login-password --region $region | docker login --username AWS --password-stdin $repo_domain
+
+                            # Docker tag
+                            docker tag $image_name:latest $repo_domain/$image_name:$image_version
+
+                            # #Docker push
+                            docker push $repo_domain/$image_name:$image_version
+
+                            ''', returnStdout: false)
+                  }
+            }  
+        }
+      
+        stage("Assuming role for perform kubernetes resource deployment - Dev environment") {
+          when {
+                   allOf{ 
+                    expression { environment == 'dev' }
+                    expression { deploy_code == 'yes' }
+                   }
+          }             
+            steps {
+                container('app-name-helm') {
+                        withCredentials([string(credentialsId: 'cloudbees-appdev-role-access', variable: 'ROLE_ARN'), string(credentialsId: 'cloudbees-external-id', variable: 'EXTERNAL_ID')]) {
+                            script {
+                                result = sh(returnStdout: true, script: """
+                                    aws sts assume-role --role-arn ${ROLE_ARN} --role-session-name ${EXTERNAL_ID} --external-id ${EXTERNAL_ID}
+                                """).trim()
+                                
+                                env.AWS_ACCESS_KEY_ID = sh(returnStdout: true, script: """echo '${result}' | jq .Credentials.AccessKeyId | xargs""").trim()
+                                env.AWS_SECRET_ACCESS_KEY = sh(returnStdout: true, script: """echo '${result}' | jq .Credentials.SecretAccessKey | xargs""").trim()
+                                env.AWS_SESSION_TOKEN = sh(returnStdout: true, script: """echo '${result}' | jq .Credentials.SessionToken | xargs""").trim()
+                            }
+                        }
+                    }
+            }
+        }
+
+        stage("Assuming role for perform kubernetes resource deployment - QA environment") {
+          when {
+                   allOf{ 
+                    expression { environment == 'qa' }
+                    expression { deploy_code == 'yes' }
+                   }
+          }             
+            steps {
+                container('app-name-helm') {
+                        withCredentials([string(credentialsId: 'cloudbees-appqa-role-access', variable: 'ROLE_ARN'), string(credentialsId: 'cloudbees-external-id', variable: 'EXTERNAL_ID')]) {
+                            script {
+                                result = sh(returnStdout: true, script: """
+                                    aws sts assume-role --role-arn ${ROLE_ARN} --role-session-name ${EXTERNAL_ID} --external-id ${EXTERNAL_ID}
+                                """).trim()
+                                
+                                env.AWS_ACCESS_KEY_ID = sh(returnStdout: true, script: """echo '${result}' | jq .Credentials.AccessKeyId | xargs""").trim()
+                                env.AWS_SECRET_ACCESS_KEY = sh(returnStdout: true, script: """echo '${result}' | jq .Credentials.SecretAccessKey | xargs""").trim()
+                                env.AWS_SESSION_TOKEN = sh(returnStdout: true, script: """echo '${result}' | jq .Credentials.SessionToken | xargs""").trim()
+                            }
+                        }
+                    }
+            }
+        }
+        stage('Apply Kubernetes resources ') {
+          when {
+                    expression { deploy_code == 'yes' }
+            }           
+			steps {
+                    container('app-name-helm') {
+                      script {
+                        sh(script: "aws eks --region $region update-kubeconfig --name $cluster_name", returnStdout: true)
+                        helm_list = sh(script: '''
+                                        #getting token for api call to get blue deployment service name and key
+
+                                        token_id=$(curl --location --request POST $token_domain \
+                                        --header 'Content-Type: application/json' \
+                                        --data-raw '{
+                                            "email": "'$token_account_email'",
+                                            "password": "'$token_account_password'"
+                                        }' | jq -r '.token.id')                        
+
+                                        #finding chart name for existing blue deployment
+
+                                        proxy_service_api_domain_get=''$proxy_service_domain'/proxy/api/v1/mappings/getAll'
+                                        chart_name=$(curl --location --request GET $proxy_service_api_domain_get \
+                                        --header 'X-GL-Authorization: GLToken '$token_id'' | jq -r '.[] | select(.group == "default" and .key == "'$service_domain'").value' | cut -f1-4 -d"-")
+
+                                        #checking helm list for blue stack
+                                        if helm list --filter $chart_name -n $namespace | awk 'NR==2 {print$1}' | grep -q $chart_name; then
+                                            echo "$chart_name"
+                                        else
+                                            echo "none"
+                                        fi      
+                                    ''' , returnStdout: true).trim()                       
+                        sh (script: '''
+                            set -xe
+
+                            aws eks --region $region update-kubeconfig --name $cluster_name
+
+                            helm upgrade ''$service_name'-'$service_key'' $chart_location --set serviceKey=$service_key --set image.tag="$image_version" --values $chart_location/values.yaml -n $namespace --create-namespace --install
+
+                            ''', returnStdout: false)
+                        }
+                  }
+               }   
+           }  
+
+		
+        stage('Call "ConfigUpdater" service - Dev environment') {
+          when {
+                    expression { deploy_code == 'yes' }
+                }                      
+			steps {
+              container('app-name-helm') {                    
+                      sh (script: '''
+
+                            # Get Token from Account Manager
+                            token_id=$(curl --location --request POST $token_domain \
+                            --header 'Content-Type: application/json' \
+                            --data-raw '{
+                                "email": "'$token_account_email'",
+                                "password": "'$token_account_password'"
+                            }' | jq -r '.token.id')
+
+                            set -xe
+                            #making value of environment variable uppercase for config updater
+                            export environment_config=$(echo $environment | tr 'a-z' 'A-Z')
+                            curl  -f -d '{"service": "'$service_name'", "environment": "'$environment_config'", "key": "'$service_key'", "version": "'$image_version'"}' -H "Content-Type: application/json" -H "X-GL-Authorization: GLToken $token_id" -X POST $config_updater_domain
+                       ''', returnStdout: false)
+                    }  
+                 }
+            }  
+
+        stage('Health check') {
+          when {
+                    expression { deploy_code == 'yes' }
+          }             
+			steps {
+              container('app-name-helm') {                    
+                        sh (script: '''
+                            #!/bin/bash
+                            set -xe
+                            ingress_name=''$service_name'-'$service_key''
+
+                            sleep 20 #waiting for alb to be created available
+                            
+                            http_endpoint=$( kubectl get ingress $ingress_name -n $namespace | awk 'NR==2 {print$4}' )
+
+                            attempt_counter=0
+                            max_attempts=120
+
+                            until $(curl --output /dev/null --silent --head --fail $http_endpoint); do
+                                if [ ${attempt_counter} -eq ${max_attempts} ];then
+                                echo "Max attempts reached"
+                                exit 1
+                                fi
+
+                                printf '.'
+                                attempt_counter=$(($attempt_counter+1))
+                                sleep 5
+                            done
+
+                        
+                        ''', returnStdout: false)
+                       }
+                 }
+            }  
+   
+        stage('Defaulting service ') {
+          when {
+                    expression { deploy_code == 'yes' }
+          }             
+			steps {
+                    container('app-name-helm') {
+                        sh (script: '''
+                            set -xe
+                            export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                            export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                            aws eks --region $region update-kubeconfig --name $cluster_name
+                            
+                            #Api call to get token
+
+                            token_id=$( curl --location --request POST $token_domain \
+                            --header 'Content-Type: application/json' \
+                            --data-raw '{
+                                "email": "'$token_account_email'",
+                                "password": "'$token_account_password'"
+                            }' | jq -r '.token.id' )                           
+                            
+
+                            echo "defaulting service"
+                            sleep 5
+
+                            #defaulting the service by adding the alb mapping
+                            group="default"
+
+                            ingress_name=''$service_name'-'$service_key''
+                            service_alb_domain=$( kubectl get ingress $ingress_name -n $namespace | awk 'NR==2 {print$4}' )
+
+                            proxy_service_api_domain_add=''$proxy_service_domain'/proxy/api/v1/mappings/add'
+                            proxy_service_api_domain_update=''$proxy_service_domain'/proxy/api/v1/mappings/update?key='$service_domain'&group='$group''
+
+                            #conditional statement needed here to default to green stack since mapping already exists for blue stack - use update if add fails
+                            #add for new deployment, update to replace previous version
+
+                            #check to see if mapping exists, update if exists, add if it doesnt. if statement also used as a check on proxy - if call is unsuccessful the job exits
+                           
+                            if curl --location --request POST $proxy_service_api_domain_add  \
+                            --header 'X-GL-Authorization: GLToken '$token_id'' \
+                            --header 'Content-Type: application/json' \
+                            --data-raw '{
+                            "key": "'$service_domain'",
+                            "group": "'$group'",
+                            "value": "'$service_alb_domain'",
+                            "type": "host",
+                            "environmentCode": "'$environment'"
+                            }' | grep -q 'group '$group' already exists';
+
+                            then 
+                                echo "group $group mapping exists, updating mapping"
+                            
+                                curl --location --request POST $proxy_service_api_domain_update  \
+                                --header 'X-GL-Authorization: GLToken '$token_id'' \
+                                --header 'Content-Type: application/json' \
+                                --data-raw '{
+                                "key": "'$service_domain'",
+                                "group": "'$group'",
+                                "value": "'$service_alb_domain'",
+                                "type": "host",
+                                "environmentCode": "'$environment'"
+                                }'
+
+                            elif curl --location --request POST $proxy_service_api_domain_add  \
+                            --header 'X-GL-Authorization: GLToken '$token_id'' \
+                            --header 'Content-Type: application/json' \
+                            --data-raw '{
+                            "key": "'$service_domain'",
+                            "group": "'$group'",
+                            "value": "'$service_alb_domain'",
+                            "type": "host",
+                            "environmentCode": "'$environment'"
+                            }' | grep -q 'Ok';
+
+                            then 
+                                echo "mapping for default group added"
+                            else
+                                echo "proxy error or credentials for account manager are incorrect" 
+                                exit 1
+
+                            fi
+
+                            ''', returnStdout: false)
+                        }
+                  }
+            } 
+
+        stage('Updating proxy configuration with account manager base url') {
+            when {
+                expression { deploy_code == 'yes' }
+            }             
+			steps {
+                    container('app-name-helm') {
+                        sh (script: '''
+                            set -xe
+
+                            #getting token from account manager dev
+
+                            token_id=$( curl --location --request POST $token_domain \
+                            --header 'Content-Type: application/json' \
+                            --data-raw '{
+                                "email": "'$token_account_email'",
+                                "password": "'$token_account_password'"
+                            }' | jq -r '.token.id' )
+
+                            sleep 5
+
+                            proxy_service_api_domain_get=''$proxy_service_domain'/proxy/api/v1/mappings/getAll'
+
+                            # get account manager service key
+                            account_manager_default_alb=$( curl --location --request GET $proxy_service_api_domain_get \
+                            --header 'X-GL-Authorization: GLToken '$token_id'' | jq -r '.[] | select(.group == "default" and .key == "app-name.dev.app.com").value')
+
+                            # making environment e.g dev, qa, upper case
+                            export environment_config=$(echo $environment | tr 'a-z' 'A-Z') 
+
+                            # getting token from account manager prod
+                            token_id=$( curl --location --request POST $token_domain_prod \
+                            --header 'Content-Type: application/json' \
+                            --data-raw '{
+                                "email": "'$token_account_email'",
+                                "password": "'$token_account_password'"
+                            }' | jq -r '.token.id' )
+
+                           
+                            #update proxy base config
+                            config_service_domain_add=''$config_service_domain'/cs/api/v1/serviceConfiguration/param'
+
+                            curl --location --request POST ''$config_service_domain_add'' \
+                            --header 'X-GL-Authorization: GLToken '$token_id'' \
+                            --header 'Content-Type: application/json' \
+                            --data-raw '{
+                            "apiServiceCode": "proxy",
+                            "version": "'$proxy_base_config_version'",
+                            "environmentCode": "'$environment_config'",
+                            "name": "usermanagement.baseUrl",
+                            "value": "https://'$account_manager_default_alb'",
+                            "restartFlag": false,
+                            "username": "cloudbees_jenkins@glidewelldental.com",
+                            "portalRequest": true
+                            }'
+
+                            # getting config version of proxy blue
+
+                            proxy_blue_alb=$(aws route53 list-resource-record-sets --hosted-zone-id Z2Z1ZLZ3ETP6EQ --query "ResourceRecordSets[?Name == 'proxy.dev.app.com.']" | jq -r '.[].AliasTarget.DNSName')
+
+                            proxy_blue_service_key=$( echo $proxy_blue_alb | cut -f2-3 -d"-")
+
+                            proxy_blue_config_version=$( curl --location --request GET ''$config_service_domain'/cs/api/v1/services?environmentCode='$environment_config'&serviceCode=proxy' \
+                            --header 'X-GL-Authorization: GLToken '$token_id'' | jq -r '.services[] | select(.apiServiceCode == "proxy" and .serviceKey == "'$proxy_blue_service_key'").apiServiceVersion' )
+
+
+                            #update proxy blue config
+                            curl --location --request POST ''$config_service_domain_add'' \
+                            --header 'X-GL-Authorization: GLToken '$token_id'' \
+                            --header 'Content-Type: application/json' \
+                            --data-raw '{
+                            "apiServiceCode": "proxy",
+                            "version": "'$proxy_blue_config_version'",
+                            "environmentCode": "'$environment_config'",
+                            "serviceKey": "'$proxy_blue_service_key'",
+                            "name": "usermanagement.baseUrl",
+                            "value": "https://'$account_manager_default_alb'",
+                            "restartFlag": false,
+                            "username": "cloudbees_jenkins@glidewelldental.com",
+                            "portalRequest": true
+                            }'
+                                                                     
+
+                            ''', returnStdout: false)
+                        }
+                  }
+            }
+
+        stage('Cleanup selection') {
+          when {
+                    expression { deploy_code == 'yes' }
+          }             
+            steps {
+                script {
+                    def tag_response = input message: 'Select a release tag to remove resources from eks cluster',
+                            parameters: [choice(choices: "${helm_list}\nnone",  description: 'Select a tag to clean up or none if this is a new deployment', name: '')]
+                    env.tag_response = tag_response
+                }
+
+            }
+        }              
+        stage('Cleanup ') {
+          when {
+                    expression { deploy_code == 'yes' }
+          }             
+			steps {
+                    container('app-name-helm') {
+                       script{
+                            if (env.tag_response == 'none' || env.tag_response == '') {
+                                echo "No cleanup required"
+                                echo "Deployment complete"
+                            } 
+                            else {
+                                sh (script: '''
+                                    set -xe
+                                    export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                                    export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                                    aws eks --region $region update-kubeconfig --name $cluster_name
+                                    
+                                    #Api call to get token
+
+                                    token_id=$( curl --location --request POST $token_domain \
+                                    --header 'Content-Type: application/json' \
+                                    --data-raw '{
+                                        "email": "'$token_account_email'",
+                                        "password": "'$token_account_password'"
+                                    }' | jq -r '.token.id' )                           
+                                    
+
+                                    echo "removing existing ab mapping for green deployment"
+                                    sleep 5
+
+                                    #remove existing ab mapping for green deployment
+
+                                    ingress_name=''$service_name'-'$service_key''
+                                    group=$ingress_name
+                                    service_alb_domain=$( kubectl get ingress $ingress_name -n $namespace | awk 'NR==2 {print$4}' )
+
+                                    proxy_service_api_domain_delete=''$proxy_service_domain'/proxy/api/v1/mappings/delete?key='$service_domain'&group='$group''
+
+                                    curl --location --request DELETE $proxy_service_api_domain_delete  \
+                                    --header 'X-GL-Authorization: GLToken '$token_id'' \
+                                    --header 'Content-Type: application/json' \
+                                    --data-raw '{
+                                    "key": "'$service_domain'",
+                                    "group": "'$group'",
+                                    "value": "'$service_alb_domain'",
+                                    "type": "host",
+                                    "environmentCode": "'$environment'"
+                                    }'
+
+                                    #delete  resources for bluedeployment in eks
+ 
+                                    echo "removing kubernetes resources from $tag_version"
+                                    helm uninstall $tag_response -n $namespace
+                                    
+                                    echo "removing configuration for $tag_version"
+
+                                    # getting service key for previous deployment
+                                    service_key_previous=$( echo $tag_response | cut -f3-4 -d"-" )
+
+                                    # making environment e.g dev, qa, upper case
+                                    export environment_config=$(echo $environment | tr 'a-z' 'A-Z') 
+
+                                    # getting token from account manager prod
+                                    token_id=$( curl --location --request POST $token_domain_prod \
+                                    --header 'Content-Type: application/json' \
+                                    --data-raw '{
+                                        "email": "'$token_account_email'",
+                                        "password": "'$token_account_password'"
+                                    }' | jq -r '.token.id' )
+
+                                    # getting version of config to delete
+                                    config_version=$( curl --location --request GET ''$config_service_domain'/cs/api/v1/services?environmentCode='$environment_config'&serviceCode='$service_name'' \
+                                    --header 'X-GL-Authorization: GLToken '$token_id'' | jq -r '.services[] | select(.apiServiceCode == "'$service_name'" and .serviceKey == "'$service_key_previous'").apiServiceVersion' )
+
+
+                                    # deleting the config
+                                    config_service_domain_delete=''$config_service_domain'/cs/api/v1/serviceConfiguration?environmentCode='$environment_config'&serviceCode='$service_name'&serviceKey='$service_key_previous'&version='$config_version''
+
+                                    curl --location --request DELETE ''$config_service_domain_delete'' \
+                                    --header 'X-GL-Authorization: GLToken '$token_id''
+                                    ''', returnStdout: false)     
+                              }  
+                           }
+                        }
+                  }
+            }
+
+        stage("Git Tag and push to repo") {
+            when {
+                    expression { environment == 'qa' }
+            }            
+            steps {
+                container('app-name-helm') {
+                            script {
+                                sshagent (credentials: ['jenkins_bb']) {                                
+  
+                                sh 'git config user.email "cloudbees_jenkins@glidewelldental.com"'
+                                sh 'git config user.name "cloudbees jenkins build agent"'
+                                
+                                sh 'ssh-add -L' 
+                                sh 'git tag -a $image_version -m "Jenkins agent tag for version $image_version - cloudbees jenkins build # $BUILD_NUMBER" --force'                                        
+                                sh 'git push origin $image_version --force'                                
+        
+                            }
+                        }
+                  }
+            }
+        }
+
+    }
+}
